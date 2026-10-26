@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>심해 지렁이</title>
+<link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet">
+<style>
+:root{--abyss:#04141f;--deep:#0a3446;--teal:#12808c;--glow:#7ff3e0;--coral:#ff7a5c;--sand:#e9d8a6}
+*{box-sizing:border-box;margin:0;touch-action:none;user-select:none;-webkit-user-select:none}
+html,body{height:100%;overflow:hidden;background:var(--abyss);font-family:'Jua','Apple SD Gothic Neo','Malgun Gothic',sans-serif;color:var(--sand)}
+canvas{display:block;width:100%;height:100%}
+#hud{position:fixed;top:10px;left:12px;font-size:20px;text-shadow:0 2px 8px #000a;pointer-events:none}
+#hud b{color:var(--glow);font-weight:400}
+#board{position:fixed;top:10px;right:12px;font-size:14px;line-height:1.5;text-align:right;text-shadow:0 2px 6px #000a;pointer-events:none;opacity:.9}
+#board .me{color:var(--glow)}
+#boost{position:fixed;right:18px;bottom:22px;width:78px;height:78px;border-radius:50%;border:2px solid var(--glow);background:#12808c66;color:var(--glow);font:inherit;font-size:16px;display:none}
+#boost.on{background:var(--glow);color:var(--abyss)}
+@media (pointer:coarse){#boost{display:block}}
+#screen{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:radial-gradient(ellipse at 50% 30%,#0a3446ee,#04141ff2);text-align:center;padding:20px}
+#screen.hide{display:none}
+h1{font-size:clamp(40px,10vw,76px);font-weight:400;color:var(--glow);letter-spacing:.02em;text-shadow:0 0 30px #7ff3e066}
+#screen p{max-width:420px;line-height:1.6;font-size:17px;color:#e9d8a6cc}
+#msg{font-size:22px;color:var(--coral);min-height:1.2em}
+#go{font:inherit;font-size:24px;padding:12px 38px;border-radius:40px;border:0;background:var(--coral);color:#2a0d05;cursor:pointer}
+#go:focus-visible{outline:3px solid var(--glow);outline-offset:3px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">길이 <b id="len">0</b></div>
+<div id="board"></div>
+<button id="boost">가속</button>
+<div id="screen">
+  <h1>심해 지렁이</h1>
+  <div id="msg"></div>
+  <p>마우스(손가락)를 따라 헤엄치고 플랑크톤을 먹어 길이를 키우세요. 스페이스바·마우스 클릭·가속 버튼을 누르면 빨라지지만 몸이 줄어요. 다른 물고기 몸통이나 벽에 머리가 닿으면 끝!</p>
+  <button id="go">헤엄치기</button>
+</div>
+<script>
+// 얼굴을 실제 물고기 사진으로 바꾸려면 아래에 이미지 주소를 넣으세요 (예: 'fish.png', 오른쪽을 보는 이미지)
+const HEAD_IMG_URL = '';
+const headImg = new Image(); if (HEAD_IMG_URL) headImg.src = HEAD_IMG_URL;
+
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+let W, H, DPR;
+function resize(){ DPR = Math.min(devicePixelRatio||1, 2); W = innerWidth; H = innerHeight; cv.width = W*DPR; cv.height = H*DPR; }
+addEventListener('resize', resize); resize();
+
+const R = 1700;                       // 바다 반지름
+const rnd = (a,b)=>a+Math.random()*(b-a);
+const TAU = Math.PI*2;
+const NAMES = ['갈치','멸치','도미','복어','광어','숭어','쏨뱅이','학공치','가오리','볼락','전갱이','옥돔'];
+
+let worms = [], food = [], player, running = false, boosting = false, mouse = {x:0,y:0}, cam = {x:0,y:0}, last = 0, t = 0;
+
+class Worm {
+  constructor(ai, name, x, y, hue){
+    this.ai = ai; this.name = name; this.hue = hue;
+    this.x = x; this.y = y; this.a = rnd(0, TAU); this.target = this.a;
+    this.segs = []; this.grow = 0; this.alive = true; this.boost = false; this.wander = 0;
+    for (let i=0;i<14;i++) this.segs.push({x:x-Math.cos(this.a)*i*7, y:y-Math.sin(this.a)*i*7});
+  }
+  get r(){ return 8 + Math.min(this.segs.length*0.07, 11); }
+}
+
+function spawnFood(x, y, v, hue){
+  food.push({x, y, v: v||1, hue: hue ?? rnd(150,200), ph: rnd(0,TAU)});
+}
+function randInWorld(m){ const a = rnd(0,TAU), d = Math.sqrt(Math.random())*(R-(m||80)); return [Math.cos(a)*d, Math.sin(a)*d]; }
+
+function reset(){
+  worms = []; food = [];
+  for (let i=0;i<420;i++){ const [x,y] = randInWorld(); spawnFood(x,y,1); }
+  player = new Worm(false, '나', 0, 0, 170);
+  worms.push(player);
+  for (let i=0;i<14;i++){
+    const [x,y] = randInWorld(300);
+    worms.push(new Worm(true, NAMES[i%NAMES.length], x, y, [10,30,55,190,210,260,300,340][i%8]));
+  }
+}
+
+function angDiff(a,b){ let d = b-a; while(d>Math.PI) d-=TAU; while(d<-Math.PI) d+=TAU; return d; }
+
+function steer(w){
+  if (!w.ai){
+    w.target = Math.atan2(mouse.y - H/2, mouse.x - W/2);
+    w.boost = boosting && w.segs.length > 14;
+    return;
+  }
+  const d = Math.hypot(w.x, w.y);
+  if (d > R-220){ w.target = Math.atan2(-w.y, -w.x); w.boost = false; return; }
+  // 다른 몸통 피하기
+  const lx = w.x + Math.cos(w.a)*70, ly = w.y + Math.sin(w.a)*70;
+  for (const o of worms){
+    if (o === w || !o.alive) continue;
+    for (let i=0;i<o.segs.length;i+=2){
+      const s = o.segs[i];
+      if (Math.hypot(s.x-lx, s.y-ly) < o.r+w.r+16){
+        w.target = w.a + (angDiff(w.a, Math.atan2(s.y-w.y, s.x-w.x)) > 0 ? -1.4 : 1.4);
+        w.boost = false; return;
+      }
+    }
+  }
+  // 가까운 먹이 찾기
+  let best = null, bd = 380*380;
+  for (let i=0;i<food.length;i+=3){
+    const f = food[i], dd = (f.x-w.x)**2 + (f.y-w.y)**2;
+    if (dd < bd){ bd = dd; best = f; }
+  }
+  w.wander += rnd(-.08,.08);
+  w.target = best ? Math.atan2(best.y-w.y, best.x-w.x) : w.a + w.wander;
+  w.boost = false;
+}
+
+function move(w, k){
+  const turn = (w.boost ? 0.06 : 0.085) * k;
+  const df = angDiff(w.a, w.target);
+  w.a += Math.max(-turn, Math.min(turn, df));
+  const sp = (w.boost ? 5 : 2.8) * k;
+  w.x += Math.cos(w.a)*sp; w.y += Math.sin(w.a)*sp;
+  w.segs[0].x = w.x; w.segs[0].y = w.y;
+  const gap = w.r*0.72;
+  for (let i=1;i<w.segs.length;i++){
+    const p = w.segs[i-1], s = w.segs[i];
+    const dx = p.x-s.x, dy = p.y-s.y, d = Math.hypot(dx,dy);
+    if (d > gap){ s.x += dx/d*(d-gap); s.y += dy/d*(d-gap); }
+  }
+  if (w.boost){
+    w.grow -= 0.045*k;
+    if (w.grow <= -1 && w.segs.length > 12){
+      const tl = w.segs.pop(); w.grow += 1; spawnFood(tl.x+rnd(-6,6), tl.y+rnd(-6,6), 1, w.hue);
+    }
+  }
+  // 먹이 먹기
+  const er = w.r + 10;
+  for (let i=food.length-1;i>=0;i--){
+    const f = food[i];
+    const dx = f.x-w.x, dy = f.y-w.y;
+    if (dx*dx+dy*dy < er*er){
+      w.grow += f.v*0.5; food.splice(i,1);
+      if (food.length < 420){ const [x,y] = randInWorld(); spawnFood(x,y,1); }
+    } else if (dx*dx+dy*dy < 4900 && w.ai === false){ f.x -= dx*0.04; f.y -= dy*0.04; }
+  }
+  while (w.grow >= 1){ const tl = w.segs[w.segs.length-1]; w.segs.push({x:tl.x,y:tl.y}); w.grow -= 1; }
+}
+
+function kill(w){
+  w.alive = false;
+  for (let i=0;i<w.segs.length;i+=2) spawnFood(w.segs[i].x+rnd(-8,8), w.segs[i].y+rnd(-8,8), 2, w.hue);
+}
+
+function collide(){
+  for (const w of worms){
+    if (!w.alive) continue;
+    if (Math.hypot(w.x,w.y) > R) { kill(w); continue; }
+    for (const o of worms){
+      if (o === w || !o.alive) continue;
+      const lim = (o.r + w.r*0.7)**2;
+      for (let i=2;i<o.segs.length;i++){
+        const s = o.segs[i];
+        if ((s.x-w.x)**2 + (s.y-w.y)**2 < lim){ kill(w); break; }
+      }
+      if (!w.alive) break;
+    }
+  }
+  // 죽은 봇 재생성
+  for (let i=worms.length-1;i>=0;i--){
+    const w = worms[i];
+    if (!w.alive && w.ai){
+      worms.splice(i,1);
+      const [x,y] = randInWorld(300);
+      worms.push(new Worm(true, NAMES[(Math.random()*NAMES.length)|0], x, y, rnd(0,360)));
+    }
+  }
+}
+
+/* ---------- 그리기 ---------- */
+const bubbles = Array.from({length:60}, ()=>({x:Math.random(), y:Math.random(), r:rnd(1.5,6), s:rnd(.02,.07), ph:rnd(0,TAU)}));
+const weeds = Array.from({length:70}, (_,i)=>{ const a = i/70*TAU + rnd(-.03,.03); return {a, h:rnd(60,150), ph:rnd(0,TAU), hue:rnd(130,170)}; });
+
+function drawBackground(){
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#0f5568'); g.addColorStop(.45,'#0a3446'); g.addColorStop(1,'#04141f');
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+  // 빛줄기
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  for (let i=0;i<5;i++){
+    const bx = (i+0.5)/5*W + Math.sin(t*0.0003+i*2)*80 - cam.x*0.05;
+    const lg = ctx.createLinearGradient(bx,0,bx,H*0.9);
+    lg.addColorStop(0,'rgba(127,243,224,.10)'); lg.addColorStop(1,'rgba(127,243,224,0)');
+    ctx.fillStyle = lg;
+    ctx.beginPath(); ctx.moveTo(bx-30,0); ctx.lineTo(bx+30,0); ctx.lineTo(bx+170+i*14,H); ctx.lineTo(bx-110,H); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawWorld(){
+  ctx.save();
+  ctx.translate(W/2 - cam.x, H/2 - cam.y);
+  // 모래 바닥 원
+  const sg = ctx.createRadialGradient(0,0,R*0.2,0,0,R);
+  sg.addColorStop(0,'rgba(18,128,140,.18)'); sg.addColorStop(.85,'rgba(10,52,70,.35)'); sg.addColorStop(1,'rgba(233,216,166,.22)');
+  ctx.fillStyle = sg; ctx.beginPath(); ctx.arc(0,0,R,0,TAU); ctx.fill();
+  // 경계 바깥 어둠
+  ctx.save(); ctx.beginPath(); ctx.rect(cam.x-W,cam.y-H,W*2,H*2); ctx.arc(0,0,R,0,TAU,true);
+  ctx.fillStyle = 'rgba(2,8,14,.88)'; ctx.fill('evenodd'); ctx.restore();
+  ctx.strokeStyle = 'rgba(255,122,92,.55)'; ctx.lineWidth = 6; ctx.setLineDash([22,16]);
+  ctx.beginPath(); ctx.arc(0,0,R,0,TAU); ctx.stroke(); ctx.setLineDash([]);
+  // 해초
+  for (const w of weeds){
+    const bx = Math.cos(w.a)*(R+6), by = Math.sin(w.a)*(R+6);
+    if (Math.abs(bx-cam.x) > W/2+80 || Math.abs(by-cam.y) > H/2+80) continue;
+    const nx = -Math.cos(w.a), ny = -Math.sin(w.a), sway = Math.sin(t*0.0015+w.ph)*22;
+    ctx.strokeStyle = `hsla(${w.hue},55%,38%,.85)`; ctx.lineWidth = 7; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(bx,by);
+    ctx.quadraticCurveTo(bx+nx*w.h*.5-ny*sway, by+ny*w.h*.5+nx*sway, bx+nx*w.h+ny*sway*.5, by+ny*w.h-nx*sway*.5);
+    ctx.stroke();
+  }
+  // 플랑크톤
+  for (const f of food){
+    if (Math.abs(f.x-cam.x) > W/2+20 || Math.abs(f.y-cam.y) > H/2+20) continue;
+    const r = (f.v>1?5.5:3.6) + Math.sin(t*0.004+f.ph)*0.8;
+    ctx.fillStyle = `hsla(${f.hue},90%,70%,.25)`; ctx.beginPath(); ctx.arc(f.x,f.y,r*2.4,0,TAU); ctx.fill();
+    ctx.fillStyle = `hsl(${f.hue},90%,72%)`; ctx.beginPath(); ctx.arc(f.x,f.y,r,0,TAU); ctx.fill();
+  }
+  for (const w of worms) if (w.alive) drawWorm(w);
+  ctx.restore();
+}
+
+function drawWorm(w){
+  const r = w.r, n = w.segs.length;
+  if (Math.abs(w.x-cam.x) > W+n*8 && Math.abs(w.y-cam.y) > H+n*8) return;
+  // 몸통: 꼬리 → 머리
+  for (let i=n-1;i>=1;i--){
+    const s = w.segs[i], tp = i/n;
+    const rr = r*(0.62 + 0.38*(1-tp));
+    if (Math.abs(s.x-cam.x) > W/2+40 || Math.abs(s.y-cam.y) > H/2+40) continue;
+    const l = 38 + 16*(1-tp) + (i%4<2 ? 7 : 0);
+    ctx.fillStyle = `hsl(${w.hue + tp*25},70%,${l}%)`;
+    ctx.beginPath(); ctx.arc(s.x,s.y,rr,0,TAU); ctx.fill();
+    if (i%3===0){ ctx.fillStyle = 'rgba(255,255,255,.14)'; ctx.beginPath(); ctx.arc(s.x-rr*.25,s.y-rr*.3,rr*.4,0,TAU); ctx.fill(); }
+  }
+  if (w.boost){ ctx.fillStyle = 'rgba(127,243,224,.2)'; ctx.beginPath(); ctx.arc(w.x,w.y,r*1.9,0,TAU); ctx.fill(); }
+  drawFishHead(w);
+  if (w.ai || true){
+    ctx.fillStyle = 'rgba(233,216,166,.85)'; ctx.font = '13px Jua, sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(w.name, w.x, w.y - r*1.9);
+  }
+}
+
+function drawFishHead(w){
+  const r = w.r;
+  ctx.save(); ctx.translate(w.x,w.y); ctx.rotate(w.a);
+  if (headImg.complete && headImg.naturalWidth){
+    ctx.drawImage(headImg, -r*1.6, -r*1.3, r*3.4, r*2.6); ctx.restore(); return;
+  }
+  // 가슴지느러미
+  ctx.fillStyle = `hsla(${(w.hue+30)%360},85%,60%,.75)`;
+  for (const sd of [-1,1]){
+    ctx.beginPath(); ctx.moveTo(-r*.1, sd*r*.8); ctx.quadraticCurveTo(-r*.9, sd*r*1.9, -r*1.5, sd*r*1.35); ctx.quadraticCurveTo(-r*.9, sd*r*1.0, -r*.5, sd*r*.8); ctx.fill();
+  }
+  // 머리통
+  const hg = ctx.createLinearGradient(0,-r,0,r);
+  hg.addColorStop(0,`hsl(${w.hue},60%,32%)`); hg.addColorStop(.5,`hsl(${w.hue},65%,55%)`); hg.addColorStop(1,`hsl(${w.hue},35%,82%)`);
+  ctx.fillStyle = hg; ctx.beginPath();
+  ctx.moveTo(r*1.75,0); ctx.bezierCurveTo(r*1.5,-r*.9, r*.4,-r*1.15, -r*.9,-r*.95);
+  ctx.lineTo(-r*.9, r*.95); ctx.bezierCurveTo(r*.4,r*1.15, r*1.5,r*.9, r*1.75,0); ctx.fill();
+  // 등 줄무늬
+  ctx.strokeStyle = `hsla(${w.hue},70%,20%,.45)`; ctx.lineWidth = r*.12;
+  ctx.beginPath(); ctx.moveTo(r*1.3,0); ctx.lineTo(-r*.8,0); ctx.stroke();
+  // 아가미
+  ctx.strokeStyle = 'rgba(0,0,0,.3)'; ctx.lineWidth = 1.6;
+  for (const sd of [-1,1]){ ctx.beginPath(); ctx.arc(-r*.3, sd*r*.1, r*.8, sd>0?0.5:-2.1, sd>0?2.1:-0.5); ctx.stroke(); }
+  // 입
+  ctx.strokeStyle = '#2a0d05'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(r*1.7,0); ctx.lineTo(r*1.3,0); ctx.stroke();
+  // 눈
+  const look = Math.max(-.5, Math.min(.5, angDiff(w.a, w.target)))*r*.15;
+  for (const sd of [-1,1]){
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(r*.62, sd*r*.62, r*.4, 0, TAU); ctx.fill();
+    ctx.strokeStyle = '#d9a441'; ctx.lineWidth = 1.4; ctx.stroke();
+    ctx.fillStyle = '#04141f'; ctx.beginPath(); ctx.arc(r*.72, sd*r*.62+look, r*.22, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(r*.66, sd*r*.62-r*.08, r*.07, 0, TAU); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawBubbles(){
+  ctx.strokeStyle = 'rgba(190,255,245,.35)'; ctx.lineWidth = 1.2;
+  for (const b of bubbles){
+    b.y -= b.s*0.016; if (b.y < -0.05) { b.y = 1.05; b.x = Math.random(); }
+    const x = (b.x*W + Math.sin(t*0.001+b.ph)*12 - cam.x*0.2*(b.r/6)) % W, y = b.y*H;
+    ctx.beginPath(); ctx.arc((x+W)%W, y, b.r, 0, TAU); ctx.stroke();
+  }
+}
+
+function drawMini(){
+  const s = 52, mx = 14+s, my = H-14-s;
+  ctx.save(); ctx.globalAlpha = .75;
+  ctx.fillStyle = 'rgba(4,20,31,.6)'; ctx.strokeStyle = 'rgba(127,243,224,.5)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(mx,my,s,0,TAU); ctx.fill(); ctx.stroke();
+  for (const w of worms){ if(!w.alive) continue; ctx.fillStyle = w.ai ? 'rgba(255,122,92,.9)' : '#7ff3e0'; ctx.beginPath(); ctx.arc(mx+w.x/R*s, my+w.y/R*s, w.ai?2:3.2, 0, TAU); ctx.fill(); }
+  ctx.restore();
+}
+
+function updateHud(){
+  document.getElementById('len').textContent = player.segs.length;
+  if ((t|0)%6 !== 0) return;
+  const top = worms.filter(w=>w.alive).sort((a,b)=>b.segs.length-a.segs.length).slice(0,5);
+  document.getElementById('board').innerHTML = top.map((w,i)=>`<div class="${w===player?'me':''}">${i+1}. ${w.name} ${w.segs.length}</div>`).join('');
+}
+
+/* ---------- 루프 ---------- */
+function loop(now){
+  const dt = Math.min(50, now-last); last = now; t = now;
+  const k = dt/16.67;
+  drawBackground();
+  if (running){
+    for (const w of worms) if (w.alive){ steer(w); move(w,k); }
+    collide();
+    cam.x += (player.x-cam.x)*Math.min(1,.14*k); cam.y += (player.y-cam.y)*Math.min(1,.14*k);
+    if (!player.alive){ running = false; end(); }
+    else updateHud();
+  } else {
+    cam.x += Math.sin(now*0.0002)*0.6; cam.y += Math.cos(now*0.00017)*0.6;
+    for (const w of worms) if (w.alive && w.ai){ steer(w); move(w,k*0.6); }
+    collide();
+  }
+  drawWorld(); drawBubbles();
+  if (running) drawMini();
+  requestAnimationFrame(loop);
+}
+
+function end(){
+  document.getElementById('msg').textContent = `길이 ${player.segs.length}에서 멈췄어요`;
+  document.getElementById('go').textContent = '다시 헤엄치기';
+  setTimeout(()=>document.getElementById('screen').classList.remove('hide'), 700);
+}
+function start(){
+  reset(); cam.x = 0; cam.y = 0; mouse.x = W/2+100; mouse.y = H/2;
+  document.getElementById('screen').classList.add('hide'); running = true;
+}
+
+document.getElementById('go').addEventListener('click', start);
+addEventListener('pointermove', e=>{ mouse.x = e.clientX; mouse.y = e.clientY; });
+addEventListener('pointerdown', e=>{ mouse.x = e.clientX; mouse.y = e.clientY; if (e.pointerType==='mouse' && e.target===cv) boosting = true; });
+addEventListener('pointerup', e=>{ if (e.pointerType==='mouse') boosting = false; });
+addEventListener('keydown', e=>{ if (e.code==='Space'){ boosting = true; e.preventDefault(); } });
+addEventListener('keyup', e=>{ if (e.code==='Space') boosting = false; });
+const bb = document.getElementById('boost');
+bb.addEventListener('pointerdown', e=>{ boosting = true; bb.classList.add('on'); e.stopPropagation(); });
+['pointerup','pointercancel','pointerleave'].forEach(ev=>bb.addEventListener(ev, ()=>{ boosting = false; bb.classList.remove('on'); }));
+
+reset(); worms.shift(); player = {segs:[], alive:true, x:0, y:0};
+requestAnimationFrame(t0=>{ last = t0; loop(t0); });
+</script>
+</body>
+</html>
