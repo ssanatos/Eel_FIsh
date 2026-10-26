@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-<title>심해 지렁이</title>
+<title>심해 곰치</title>
 <link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet">
 <style>
 :root{--abyss:#04141f;--deep:#0a3446;--teal:#12808c;--glow:#7ff3e0;--coral:#ff7a5c;--sand:#e9d8a6}
@@ -32,9 +32,9 @@ h1{font-size:clamp(40px,10vw,76px);font-weight:400;color:var(--glow);letter-spac
 <div id="board"></div>
 <button id="boost">가속</button>
 <div id="screen">
-  <h1>심해 지렁이</h1>
+  <h1>심해 곰치</h1>
   <div id="msg"></div>
-  <p>마우스(손가락)를 따라 헤엄치고 플랑크톤을 먹어 길이를 키우세요. 스페이스바·마우스 클릭·가속 버튼을 누르면 빨라지지만 몸이 줄어요. 다른 물고기 몸통이나 벽에 머리가 닿으면 끝!</p>
+  <p>마우스(손가락)를 따라 헤엄치고 플랑크톤을 먹어 길이를 키우세요. 스페이스바·마우스 클릭·가속 버튼을 누르면 빨라지지만 몸이 줄어요. 다른 곰치의 몸통이나 벽에 머리가 닿으면 끝!</p>
   <button id="go">헤엄치기</button>
 </div>
 <script>
@@ -72,11 +72,11 @@ function randInWorld(m){ const a = rnd(0,TAU), d = Math.sqrt(Math.random())*(R-(
 function reset(){
   worms = []; food = [];
   for (let i=0;i<420;i++){ const [x,y] = randInWorld(); spawnFood(x,y,1); }
-  player = new Worm(false, '나', 0, 0, 170);
+  player = new Worm(false, '나', 0, 0, 62);
   worms.push(player);
   for (let i=0;i<14;i++){
     const [x,y] = randInWorld(300);
-    worms.push(new Worm(true, NAMES[i%NAMES.length], x, y, [10,30,55,190,210,260,300,340][i%8]));
+    worms.push(new Worm(true, NAMES[i%NAMES.length], x, y, [28,45,80,100,15,130,200,290][i%8]));
   }
 }
 
@@ -170,7 +170,7 @@ function collide(){
     if (!w.alive && w.ai){
       worms.splice(i,1);
       const [x,y] = randInWorld(300);
-      worms.push(new Worm(true, NAMES[(Math.random()*NAMES.length)|0], x, y, rnd(0,360)));
+      worms.push(new Worm(true, NAMES[(Math.random()*NAMES.length)|0], x, y, rnd(15,140)));
     }
   }
 }
@@ -251,37 +251,53 @@ function drawWorm(w){
 
 function drawFishHead(w){
   const r = w.r;
-  ctx.save(); ctx.translate(w.x,w.y); ctx.rotate(w.a);
+  const want = Math.cos(w.a) < 0 ? -1 : 1;           // 왼쪽을 볼 땐 위아래를 뒤집어 항상 등이 위로
+  w.flip = (w.flip ?? 1) + (want - (w.flip ?? 1))*0.18;
+  const m = w.boost ? 0.5 : 0.07 + 0.04*Math.sin(t*0.004 + w.hue); // 입 벌림(가속 시 크게)
+  ctx.save(); ctx.translate(w.x,w.y); ctx.rotate(w.a); ctx.scale(1, w.flip);
   if (headImg.complete && headImg.naturalWidth){
-    ctx.drawImage(headImg, -r*1.6, -r*1.3, r*3.4, r*2.6); ctx.restore(); return;
+    ctx.drawImage(headImg, -r*1.2, -r*1.2, r*3.6, r*2.4); ctx.restore(); return;
   }
-  // 가슴지느러미
-  ctx.fillStyle = `hsla(${(w.hue+30)%360},85%,60%,.75)`;
-  for (const sd of [-1,1]){
-    ctx.beginPath(); ctx.moveTo(-r*.1, sd*r*.8); ctx.quadraticCurveTo(-r*.9, sd*r*1.9, -r*1.5, sd*r*1.35); ctx.quadraticCurveTo(-r*.9, sd*r*1.0, -r*.5, sd*r*.8); ctx.fill();
-  }
-  // 머리통
+  const hx = r*0.3, hy = r*0.05;                       // 턱 관절
   const hg = ctx.createLinearGradient(0,-r,0,r);
-  hg.addColorStop(0,`hsl(${w.hue},60%,32%)`); hg.addColorStop(.5,`hsl(${w.hue},65%,55%)`); hg.addColorStop(1,`hsl(${w.hue},35%,82%)`);
+  hg.addColorStop(0,`hsl(${w.hue},55%,30%)`); hg.addColorStop(.55,`hsl(${w.hue},55%,46%)`); hg.addColorStop(1,`hsl(${w.hue},40%,72%)`);
+  // 입 안쪽
+  const lx = hx + (1.8*r)*Math.cos(m) - (0.07*r)*Math.sin(m), ly = hy + (1.8*r)*Math.sin(m) + (0.07*r)*Math.cos(m);
+  ctx.fillStyle = '#4a1414'; ctx.beginPath(); ctx.moveTo(hx,hy); ctx.lineTo(r*2.2,-r*0.1); ctx.lineTo(lx,ly); ctx.fill();
+  // 목·아래 몸통
+  ctx.fillStyle = hg; ctx.beginPath(); ctx.moveTo(-r*0.9,0); ctx.lineTo(-r*0.9,r*0.95); ctx.lineTo(r*0.15,r*0.95); ctx.lineTo(hx,hy); ctx.fill();
+  // 아래턱
+  ctx.save(); ctx.translate(hx,hy); ctx.rotate(m);
   ctx.fillStyle = hg; ctx.beginPath();
-  ctx.moveTo(r*1.75,0); ctx.bezierCurveTo(r*1.5,-r*.9, r*.4,-r*1.15, -r*.9,-r*.95);
-  ctx.lineTo(-r*.9, r*.95); ctx.bezierCurveTo(r*.4,r*1.15, r*1.5,r*.9, r*1.75,0); ctx.fill();
-  // 등 줄무늬
-  ctx.strokeStyle = `hsla(${w.hue},70%,20%,.45)`; ctx.lineWidth = r*.12;
-  ctx.beginPath(); ctx.moveTo(r*1.3,0); ctx.lineTo(-r*.8,0); ctx.stroke();
-  // 아가미
-  ctx.strokeStyle = 'rgba(0,0,0,.3)'; ctx.lineWidth = 1.6;
-  for (const sd of [-1,1]){ ctx.beginPath(); ctx.arc(-r*.3, sd*r*.1, r*.8, sd>0?0.5:-2.1, sd>0?2.1:-0.5); ctx.stroke(); }
-  // 입
-  ctx.strokeStyle = '#2a0d05'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(r*1.7,0); ctx.lineTo(r*1.3,0); ctx.stroke();
-  // 눈
-  const look = Math.max(-.5, Math.min(.5, angDiff(w.a, w.target)))*r*.15;
-  for (const sd of [-1,1]){
-    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(r*.62, sd*r*.62, r*.4, 0, TAU); ctx.fill();
-    ctx.strokeStyle = '#d9a441'; ctx.lineWidth = 1.4; ctx.stroke();
-    ctx.fillStyle = '#04141f'; ctx.beginPath(); ctx.arc(r*.72, sd*r*.62+look, r*.22, 0, TAU); ctx.fill();
-    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(r*.66, sd*r*.62-r*.08, r*.07, 0, TAU); ctx.fill();
+  ctx.moveTo(0,0); ctx.lineTo(r*1.85,r*0.07); ctx.lineTo(r*1.8,r*0.27); ctx.lineTo(r*0.7,r*0.6); ctx.lineTo(-r*0.15,r*0.9); ctx.fill();
+  ctx.fillStyle = '#f3efe0';
+  for (let i=0;i<4;i++){ const x = r*(0.7+i*0.32); ctx.beginPath(); ctx.moveTo(x,r*0.08); ctx.lineTo(x+r*0.08,-r*0.14); ctx.lineTo(x+r*0.16,r*0.08); ctx.fill(); }
+  ctx.restore();
+  // 윗머리
+  ctx.fillStyle = hg; ctx.beginPath();
+  ctx.moveTo(-r*0.9,-r*0.95); ctx.bezierCurveTo(r*0.2,-r*1.2, r*1.2,-r*0.95, r*2.2,-r*0.3);
+  ctx.lineTo(r*2.25,-r*0.1); ctx.lineTo(hx,hy); ctx.lineTo(-r*0.9,0); ctx.fill();
+  // 등지느러미 선
+  ctx.strokeStyle = `hsla(${w.hue+10},60%,62%,.7)`; ctx.lineWidth = r*0.14; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-r*0.9,-r*0.97); ctx.bezierCurveTo(r*0.1,-r*1.22, r*0.6,-r*1.15, r*1.0,-r*0.95); ctx.stroke();
+  // 얼룩 무늬
+  ctx.fillStyle = `hsla(${w.hue},60%,14%,.5)`;
+  for (const [x,y,s] of [[0.1,-0.6,0.2],[0.75,-0.78,0.14],[-0.5,-0.3,0.22],[1.5,-0.42,0.12],[-0.2,0.45,0.16],[0.7,0.5,0.1]]){
+    ctx.beginPath(); ctx.ellipse(r*x,r*y,r*s*1.3,r*s,0,0,TAU); ctx.fill();
   }
+  // 윗니
+  ctx.fillStyle = '#f3efe0';
+  for (let i=0;i<5;i++){ const x = r*(0.75+i*0.3); ctx.beginPath(); ctx.moveTo(x,hy-r*0.02); ctx.lineTo(x+r*0.08,hy+r*0.17); ctx.lineTo(x+r*0.16,hy-r*0.04); ctx.fill(); }
+  // 콧구멍 관
+  ctx.fillStyle = `hsl(${w.hue},50%,24%)`; ctx.beginPath(); ctx.ellipse(r*1.85,-r*0.38,r*0.12,r*0.09,0.3,0,TAU); ctx.fill();
+  // 아가미 구멍
+  ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.beginPath(); ctx.ellipse(-r*0.3,r*0.1,r*0.1,r*0.3,0.15,0,TAU); ctx.fill();
+  // 눈
+  ctx.fillStyle = '#e8d07a'; ctx.beginPath(); ctx.arc(r*1.1,-r*0.3,r*0.23,0,TAU); ctx.fill();
+  ctx.fillStyle = '#04141f'; ctx.beginPath(); ctx.arc(r*1.14,-r*0.3,r*0.13,0,TAU); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(r*1.1,-r*0.35,r*0.05,0,TAU); ctx.fill();
+  ctx.strokeStyle = `hsla(${w.hue},60%,12%,.8)`; ctx.lineWidth = r*0.1;
+  ctx.beginPath(); ctx.arc(r*1.1,-r*0.3,r*0.27,Math.PI*1.05,Math.PI*1.95); ctx.stroke();
   ctx.restore();
 }
 
